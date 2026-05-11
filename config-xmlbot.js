@@ -1,8 +1,7 @@
 module.exports = {
-  token: 'ISI_TOKEN_BOT_KAMU',
-  clientId: 'ISI_CLIENT_ID_BOT_KAMU',
-  guildId: 'ISI_GUILD_ID_SERVER_KAMU',
-
+  token: process.env.TOKEN,
+  clientId: process.env.CLIENT_ID,
+  guildId: process.env.GUILD_ID,
   // Nama kustom
   botName: 'XML',
   pointName: 'XML Point',

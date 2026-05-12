@@ -8,7 +8,8 @@ const db = require('./db');
 const TOKEN     = process.env.TOKEN      || token;
 const CLIENT_ID = process.env.CLIENT_ID  || require('./config').clientId;
 const GUILD_ID  = process.env.GUILD_ID   || require('./config').guildId;
-const ADMIN_ROLE_ID = '1452225986346356777';
+const ADMIN_ROLE_ID    = '1452225986346356777';
+const INFINITY_ROLE_ID = '1502861777791352852';
 
 const HUNT_COOLDOWN     = 30 * 1000;
 const FISH_COOLDOWN     = 45 * 1000;
@@ -84,17 +85,16 @@ const enemies = [
   { name: 'Naga Jahat',  emoji: '🐲', min: 5000, max: 12000 },
 ];
 
-// ─── Fish ─────────────────────────────────────────────────────────────
 const fishes = [
-  { name: 'Ikan Kecil',    emoji: '🐟', tier: 'Common',    min: 100,  max: 500   },
-  { name: 'Ikan Mas',      emoji: '🐠', tier: 'Common',    min: 200,  max: 700   },
-  { name: 'Ikan Lele',     emoji: '🐡', tier: 'Common',    min: 300,  max: 800   },
-  { name: 'Gurita',        emoji: '🐙', tier: 'Rare',      min: 800,  max: 2000  },
-  { name: 'Penyu',         emoji: '🐢', tier: 'Rare',      min: 1000, max: 2500  },
-  { name: 'Lumba-lumba',   emoji: '🐬', tier: 'Epic',      min: 2000, max: 5000  },
-  { name: 'Paus',          emoji: '🐋', tier: 'Epic',      min: 3000, max: 7000  },
-  { name: 'Hiu Hammer',    emoji: '🦈', tier: 'Legendary', min: 5000, max: 12000 },
-  { name: 'Kraken',        emoji: '🦑', tier: 'Mythic',    min: 10000, max: 25000 },
+  { name: 'Ikan Kecil',  emoji: '🐟', tier: 'Common',    min: 100,   max: 500   },
+  { name: 'Ikan Mas',    emoji: '🐠', tier: 'Common',    min: 200,   max: 700   },
+  { name: 'Ikan Lele',   emoji: '🐡', tier: 'Common',    min: 300,   max: 800   },
+  { name: 'Gurita',      emoji: '🐙', tier: 'Rare',      min: 800,   max: 2000  },
+  { name: 'Penyu',       emoji: '🐢', tier: 'Rare',      min: 1000,  max: 2500  },
+  { name: 'Lumba-lumba', emoji: '🐬', tier: 'Epic',      min: 2000,  max: 5000  },
+  { name: 'Paus',        emoji: '🐋', tier: 'Epic',      min: 3000,  max: 7000  },
+  { name: 'Hiu Hammer',  emoji: '🦈', tier: 'Legendary', min: 5000,  max: 12000 },
+  { name: 'Kraken',      emoji: '🦑', tier: 'Mythic',    min: 10000, max: 25000 },
 ];
 
 const fishWeights = { Common: 50, Rare: 25, Epic: 15, Legendary: 8, Mythic: 2 };
@@ -134,8 +134,8 @@ function getRank(userId) {
 }
 
 function isAdmin(member) { return member.roles.cache.has(ADMIN_ROLE_ID); }
+function isInfinity(member) { return member.roles.cache.has(INFINITY_ROLE_ID); }
 
-// ─── Register commands ────────────────────────────────────────────────
 async function registerCommands() {
   const commands = [
     new SlashCommandBuilder().setName('daily').setDescription('Claim poin harian kamu'),
@@ -174,21 +174,18 @@ async function registerCommands() {
   } catch (err) { console.error('Failed to register commands:', err); }
 }
 
-// ─── Ready ────────────────────────────────────────────────────────────
 client.once('ready', async () => {
   console.log(`✅ ${botName} Bot online: ${client.user.tag}`);
   client.user.setActivity(`${pointEmoji} ${pointName}`, { type: 3 });
   await registerCommands();
 });
 
-// ─── Chat XP ─────────────────────────────────────────────────────────
 client.on('messageCreate', msg => {
   if (msg.author.bot || !msg.guild) return;
   const u = db.getUser(msg.author.id);
   db.updateUser(msg.author.id, { chat: (u.chat || 0) + 1, points: u.points + rand(1, 5) });
 });
 
-// ─── Voice XP ────────────────────────────────────────────────────────
 client.on('voiceStateUpdate', (oldState, newState) => {
   const userId = newState.member?.id || oldState.member?.id;
   if (!userId || newState.member?.user?.bot) return;
@@ -196,7 +193,6 @@ client.on('voiceStateUpdate', (oldState, newState) => {
   else if (oldState.channelId && !newState.channelId) stopVoiceXP(userId);
 });
 
-// ─── Interactions ─────────────────────────────────────────────────────
 client.on('interactionCreate', async interaction => {
   if (interaction.isButton()) {
     if (interaction.customId === 'remind_daily') interaction.reply({ content: `⏰ Ingatkan besok untuk claim daily!`, ephemeral: true });
@@ -236,12 +232,35 @@ client.on('interactionCreate', async interaction => {
 
   // /balance
   else if (commandName === 'balance') {
+    const member = await guild.members.fetch(userId);
     const ud = db.getUser(userId);
+    const totalAnimals = Object.values(ud.collection || {}).reduce((a, b) => a + b, 0);
+
+    // Infinity role check
+    if (isInfinity(member)) {
+      interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(0x00ffff)
+          .setTitle(`♾️ INFINITY — ${user.username}`)
+          .setDescription(`> *"Di atas segalanya."*`)
+          .setThumbnail(user.displayAvatarURL({ size: 256 }))
+          .addFields(
+            { name: '🏆 Rank',               value: '∞',          inline: true },
+            { name: '💬 Chat',               value: '∞',          inline: true },
+            { name: '🎙️ Voice XP',          value: '∞',          inline: true },
+            { name: `${pointEmoji} Total`,   value: '∞',          inline: true },
+            { name: `${creditEmoji} Credits`,value: '∞',          inline: true },
+            { name: '🎒 Koleksi',            value: `${totalAnimals} item`, inline: true },
+          )
+          .setFooter({ text: `♾️ Infinity Member • ${botName}` })]
+      });
+      return;
+    }
+
     const top10 = getTop10();
     const isTop10 = top10.includes(userId);
     const rank = getRank(userId);
     const rankNum = parseInt(rank.replace('#', '')) || 999;
-    const totalAnimals = Object.values(ud.collection || {}).reduce((a, b) => a + b, 0);
     const creditsStr = ud.credits < 0 ? `**-${Math.abs(ud.credits).toLocaleString()}** 🔴` : ud.credits.toLocaleString();
 
     if (isTop10) {
@@ -254,12 +273,12 @@ client.on('interactionCreate', async interaction => {
           .setDescription(`> *"Salah satu yang terkuat di server ini."*`)
           .setThumbnail(user.displayAvatarURL({ size: 256 }))
           .addFields(
-            { name: '🏆 Rank',               value: rank,                                          inline: true },
-            { name: '💬 Chat',               value: (ud.chat || 0).toLocaleString(),               inline: true },
-            { name: '🎙️ Voice XP',          value: `${(ud.voice || 0).toLocaleString()} XP`,     inline: true },
+            { name: '🏆 Rank',               value: rank,                                              inline: true },
+            { name: '💬 Chat',               value: (ud.chat || 0).toLocaleString(),                   inline: true },
+            { name: '🎙️ Voice XP',          value: `${(ud.voice || 0).toLocaleString()} XP`,         inline: true },
             { name: `${pointEmoji} Total`,   value: `**${ud.points.toLocaleString()} ${pointName}**`, inline: true },
-            { name: `${creditEmoji} Credits`,value: creditsStr,                                    inline: true },
-            { name: '🎒 Koleksi',            value: `${totalAnimals} hewan`,                      inline: true },
+            { name: `${creditEmoji} Credits`,value: creditsStr,                                        inline: true },
+            { name: '🎒 Koleksi',            value: `${totalAnimals} item`,                           inline: true },
           )
           .setFooter({ text: `✨ Elite Member • ${botName} | ${new Date().toLocaleString('id-ID')}` })]
       });
@@ -271,12 +290,12 @@ client.on('interactionCreate', async interaction => {
           .setDescription(`**${user.username}**`)
           .setThumbnail(user.displayAvatarURL({ size: 128 }))
           .addFields(
-            { name: '🏆 Rank',               value: rank,                                          inline: true },
-            { name: '💬 Chat',               value: (ud.chat || 0).toLocaleString(),               inline: true },
-            { name: '🎙️ Voice XP',          value: `${(ud.voice || 0).toLocaleString()} XP`,     inline: true },
+            { name: '🏆 Rank',               value: rank,                                              inline: true },
+            { name: '💬 Chat',               value: (ud.chat || 0).toLocaleString(),                   inline: true },
+            { name: '🎙️ Voice XP',          value: `${(ud.voice || 0).toLocaleString()} XP`,         inline: true },
             { name: `${pointEmoji} Total`,   value: `**${ud.points.toLocaleString()} ${pointName}**`, inline: true },
-            { name: `${creditEmoji} Credits`,value: creditsStr,                                    inline: true },
-            { name: '🎒 Koleksi',            value: `${totalAnimals} hewan`,                      inline: true },
+            { name: `${creditEmoji} Credits`,value: creditsStr,                                        inline: true },
+            { name: '🎒 Koleksi',            value: `${totalAnimals} item`,                           inline: true },
           )
           .setFooter({ text: `${botName} | ${new Date().toLocaleString('id-ID')}` })]
       });
@@ -316,11 +335,9 @@ client.on('interactionCreate', async interaction => {
     if (diff < FISH_COOLDOWN) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`⏰ Tunggu **${formatTime(FISH_COOLDOWN - diff)}** lagi.`)], ephemeral: true });
     db.updateUser(userId, { lastFish: new Date().toISOString() });
 
-    // 10% nyangkut sampah
     if (Math.random() < 0.10) {
       const junk = ['👟 Sepatu Bolong', '🥫 Kaleng Bekas', '🪣 Ember Rusak', '🧤 Sarung Tangan'];
-      const item = junk[Math.floor(Math.random() * junk.length)];
-      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x95a5a6).setTitle('🎣 Aduh...').setDescription(`Kamu malah dapet **${item}**... coba lagi! 😅`)] });
+      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x95a5a6).setTitle('🎣 Aduh...').setDescription(`Kamu malah dapet **${junk[Math.floor(Math.random() * junk.length)]}**... coba lagi! 😅`)] });
     }
 
     const fish = pickFish();
@@ -359,8 +376,21 @@ client.on('interactionCreate', async interaction => {
     const target = interaction.options.getUser('target');
     const ud = db.getUser(userId);
     const td = db.getUser(target.id);
+
     if (target.id === userId) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription('❌ Gak bisa rob diri sendiri!')], ephemeral: true });
-    if (td.credits < 100) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`❌ **${target.username}** gak punya cukup credits!`)], ephemeral: true });
+
+    // Cek target punya role infinity — gak bisa dirob
+    try {
+      const targetMember = await guild.members.fetch(target.id);
+      if (isInfinity(targetMember)) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription('❌ Target ini tidak bisa dirob!')], ephemeral: true });
+    } catch {}
+
+    // Cek credits target — harus lebih dari 0
+    if (td.credits <= 0) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`❌ **${target.username}** credits nya 0 atau minus, gak ada yang bisa dirampok!`)], ephemeral: true });
+
+    // Cek credits robber — harus lebih dari 0 buat nanggung denda
+    if (ud.credits <= 0) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription('❌ Credits kamu 0 atau minus, gak bisa rob dulu!')], ephemeral: true });
+
     const diff = Date.now() - (ud.lastRob ? new Date(ud.lastRob).getTime() : 0);
     if (diff < ROB_COOLDOWN) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`⏰ Tunggu **${formatTime(ROB_COOLDOWN - diff)}** lagi.`)], ephemeral: true });
     db.updateUser(userId, { lastRob: new Date().toISOString() });
@@ -383,10 +413,19 @@ client.on('interactionCreate', async interaction => {
     const target = interaction.options.getUser('target');
     const ud = db.getUser(userId);
     const td = db.getUser(target.id);
+
     if (target.id === userId) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription('❌ Gak bisa rob diri sendiri!')], ephemeral: true });
+
+    // Cek target infinity
+    try {
+      const targetMember = await guild.members.fetch(target.id);
+      if (isInfinity(targetMember)) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription('❌ Target ini tidak bisa di-rob!')], ephemeral: true });
+    } catch {}
+
     const targetCol = td.collection || {};
     const ownedAnimals = Object.entries(targetCol).filter(([, count]) => count > 0);
     if (!ownedAnimals.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`❌ **${target.username}** koleksinya kosong!`)], ephemeral: true });
+
     const diff = Date.now() - (ud.lastRobHunt ? new Date(ud.lastRobHunt).getTime() : 0);
     if (diff < ROBHUNT_COOLDOWN) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`⏰ Tunggu **${formatTime(ROBHUNT_COOLDOWN - diff)}** lagi.`)], ephemeral: true });
     db.updateUser(userId, { lastRobHunt: new Date().toISOString() });
@@ -410,24 +449,42 @@ client.on('interactionCreate', async interaction => {
     interaction.reply({ embeds: [new EmbedBuilder().setColor(tierColors[stolenAnimal.tier] || 0x57f287).setTitle('🥷 Rob Berhasil!').setDescription(`Kamu berhasil nyuri ${stolenAnimal.emoji} **${stolenName}** [${stolenAnimal.tier}] dari **${target.username}**! 🏃💨`)] });
   }
 
-  // /leaderboard
+  // /leaderboard — skip infinity role
   else if (commandName === 'leaderboard') {
-    const sorted = Object.entries(db.getAllUsers()).sort((a,b)=>b[1].points-a[1].points).slice(0,10);
-    const lines = await Promise.all(sorted.map(async ([id,data],i) => {
-      let name; try { name=(await guild.members.fetch(id)).user.username; } catch { name=`User#${id.slice(-4)}`; }
-      return `${i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}.`} **${name}** — ${pointEmoji} ${data.points.toLocaleString()}`;
-    }));
+    const allUsers = Object.entries(db.getAllUsers()).sort((a,b)=>b[1].points-a[1].points);
+    const lines = [];
+    let rank = 0;
+    for (const [id, data] of allUsers) {
+      if (lines.length >= 10) break;
+      let name;
+      try {
+        const m = await guild.members.fetch(id);
+        if (isInfinity(m)) continue; // skip infinity
+        name = m.user.username;
+      } catch { continue; }
+      rank++;
+      lines.push(`${rank===1?'🥇':rank===2?'🥈':rank===3?'🥉':`${rank}.`} **${name}** — ${pointEmoji} ${data.points.toLocaleString()}`);
+    }
     interaction.reply({ embeds: [new EmbedBuilder().setColor(0xffd700).setTitle(`🏆 TOP LEADERBOARD — ${pointName}`).setDescription(lines.join('\n')||'Belum ada data.').setFooter({ text: `${botName} | ${new Date().toLocaleString('id-ID')}` })] });
   }
 
-  // /top
+  // /top — skip infinity role
   else if (commandName === 'top') {
-    const sorted = Object.entries(db.getAllUsers()).sort((a,b)=>b[1].credits-a[1].credits).slice(0,10);
-    const lines = await Promise.all(sorted.map(async ([id,data],i) => {
-      let name; try { name=(await guild.members.fetch(id)).user.username; } catch { name=`User#${id.slice(-4)}`; }
+    const allUsers = Object.entries(db.getAllUsers()).sort((a,b)=>b[1].credits-a[1].credits);
+    const lines = [];
+    let rank = 0;
+    for (const [id, data] of allUsers) {
+      if (lines.length >= 10) break;
+      let name;
+      try {
+        const m = await guild.members.fetch(id);
+        if (isInfinity(m)) continue; // skip infinity
+        name = m.user.username;
+      } catch { continue; }
+      rank++;
       const credStr = data.credits < 0 ? `-${Math.abs(data.credits).toLocaleString()} 🔴` : data.credits.toLocaleString();
-      return `${i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}.`} **${name}** — ${creditEmoji} ${credStr}`;
-    }));
+      lines.push(`${rank===1?'🥇':rank===2?'🥈':rank===3?'🥉':`${rank}.`} **${name}** — ${creditEmoji} ${credStr}`);
+    }
     interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle(`💰 TOP LEADERBOARD — ${creditName}`).setDescription(lines.join('\n')||'Belum ada data.').setFooter({ text: `${botName} | ${new Date().toLocaleString('id-ID')}` })] });
   }
 

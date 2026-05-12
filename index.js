@@ -11,6 +11,7 @@ const GUILD_ID  = process.env.GUILD_ID   || require('./config').guildId;
 const ADMIN_ROLE_ID = '1452225986346356777';
 
 const HUNT_COOLDOWN     = 30 * 1000;
+const FISH_COOLDOWN     = 45 * 1000;
 const ROB_COOLDOWN      = 5 * 60 * 1000;
 const ROBHUNT_COOLDOWN  = 5 * 60 * 1000;
 const VOICE_XP_INTERVAL = 60 * 1000;
@@ -83,6 +84,28 @@ const enemies = [
   { name: 'Naga Jahat',  emoji: '🐲', min: 5000, max: 12000 },
 ];
 
+// ─── Fish ─────────────────────────────────────────────────────────────
+const fishes = [
+  { name: 'Ikan Kecil',    emoji: '🐟', tier: 'Common',    min: 100,  max: 500   },
+  { name: 'Ikan Mas',      emoji: '🐠', tier: 'Common',    min: 200,  max: 700   },
+  { name: 'Ikan Lele',     emoji: '🐡', tier: 'Common',    min: 300,  max: 800   },
+  { name: 'Gurita',        emoji: '🐙', tier: 'Rare',      min: 800,  max: 2000  },
+  { name: 'Penyu',         emoji: '🐢', tier: 'Rare',      min: 1000, max: 2500  },
+  { name: 'Lumba-lumba',   emoji: '🐬', tier: 'Epic',      min: 2000, max: 5000  },
+  { name: 'Paus',          emoji: '🐋', tier: 'Epic',      min: 3000, max: 7000  },
+  { name: 'Hiu Hammer',    emoji: '🦈', tier: 'Legendary', min: 5000, max: 12000 },
+  { name: 'Kraken',        emoji: '🦑', tier: 'Mythic',    min: 10000, max: 25000 },
+];
+
+const fishWeights = { Common: 50, Rare: 25, Epic: 15, Legendary: 8, Mythic: 2 };
+
+function pickFish() {
+  const total = fishes.reduce((s, f) => s + (fishWeights[f.tier] || 1), 0);
+  let roll = Math.random() * total;
+  for (const f of fishes) { roll -= (fishWeights[f.tier] || 1); if (roll <= 0) return f; }
+  return fishes[0];
+}
+
 const shopItems = [
   { id: 1, name: 'Custom Role', price: 100000, emoji: '🎭', desc: 'Dapetin role kustom di server' },
   { id: 2, name: 'VIP Badge',   price: 50000,  emoji: '⭐', desc: 'Badge VIP eksklusif'           },
@@ -119,6 +142,7 @@ async function registerCommands() {
     new SlashCommandBuilder().setName('weekly').setDescription('Claim poin mingguan kamu'),
     new SlashCommandBuilder().setName('balance').setDescription('Cek saldo XML Point kamu'),
     new SlashCommandBuilder().setName('hunt').setDescription('Berburu hewan (cooldown 30 detik)'),
+    new SlashCommandBuilder().setName('fish').setDescription('Mancing ikan (cooldown 45 detik)'),
     new SlashCommandBuilder().setName('collection').setDescription('Lihat koleksi hewan kamu'),
     new SlashCommandBuilder()
       .setName('rob').setDescription('Rampok credits user lain (berisiko!)')
@@ -126,7 +150,8 @@ async function registerCommands() {
     new SlashCommandBuilder()
       .setName('robhunt').setDescription('Curi hewan dari koleksi user lain (75% ketangkep!)')
       .addUserOption(o => o.setName('target').setDescription('Target user').setRequired(true)),
-    new SlashCommandBuilder().setName('leaderboard').setDescription('Top ranking server'),
+    new SlashCommandBuilder().setName('leaderboard').setDescription('Top ranking XML Point'),
+    new SlashCommandBuilder().setName('top').setDescription('Top ranking Credits'),
     new SlashCommandBuilder()
       .setName('give').setDescription('Kasih poin ke user lain')
       .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
@@ -217,49 +242,44 @@ client.on('interactionCreate', async interaction => {
     const rank = getRank(userId);
     const rankNum = parseInt(rank.replace('#', '')) || 999;
     const totalAnimals = Object.values(ud.collection || {}).reduce((a, b) => a + b, 0);
-
-    // Credits bisa minus
-    const creditsStr = ud.credits < 0
-      ? `**-${Math.abs(ud.credits).toLocaleString()}** 🔴`
-      : ud.credits.toLocaleString();
+    const creditsStr = ud.credits < 0 ? `**-${Math.abs(ud.credits).toLocaleString()}** 🔴` : ud.credits.toLocaleString();
 
     if (isTop10) {
-      // TOP 10 — tampilan keren
       const medals = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
       const medal = medals[rankNum - 1] || '🏆';
-      const embed = new EmbedBuilder()
-        .setColor(0xffd700)
-        .setTitle(`${medal} TOP ${rankNum} — ${user.username}`)
-        .setDescription(`> *"Salah satu yang terkuat di server ini."*`)
-        .setThumbnail(user.displayAvatarURL({ size: 256 }))
-        .addFields(
-          { name: '🏆 Rank',             value: rank,                                         inline: true },
-          { name: '💬 Chat',             value: (ud.chat || 0).toLocaleString(),              inline: true },
-          { name: '🎙️ Voice XP',        value: `${(ud.voice || 0).toLocaleString()} XP`,    inline: true },
-          { name: `${pointEmoji} Total`, value: `**${ud.points.toLocaleString()} ${pointName}**`, inline: true },
-          { name: `${creditEmoji} Credits`, value: creditsStr,                               inline: true },
-          { name: '🎒 Koleksi',          value: `${totalAnimals} hewan`,                     inline: true },
-        )
-        .setFooter({ text: `✨ Elite Member • ${botName} | ${new Date().toLocaleString('id-ID')}` })
-        .setImage('https://i.imgur.com/filler.png');
-      interaction.reply({ embeds: [embed] });
+      interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(0xffd700)
+          .setTitle(`${medal} TOP ${rankNum} — ${user.username}`)
+          .setDescription(`> *"Salah satu yang terkuat di server ini."*`)
+          .setThumbnail(user.displayAvatarURL({ size: 256 }))
+          .addFields(
+            { name: '🏆 Rank',               value: rank,                                          inline: true },
+            { name: '💬 Chat',               value: (ud.chat || 0).toLocaleString(),               inline: true },
+            { name: '🎙️ Voice XP',          value: `${(ud.voice || 0).toLocaleString()} XP`,     inline: true },
+            { name: `${pointEmoji} Total`,   value: `**${ud.points.toLocaleString()} ${pointName}**`, inline: true },
+            { name: `${creditEmoji} Credits`,value: creditsStr,                                    inline: true },
+            { name: '🎒 Koleksi',            value: `${totalAnimals} hewan`,                      inline: true },
+          )
+          .setFooter({ text: `✨ Elite Member • ${botName} | ${new Date().toLocaleString('id-ID')}` })]
+      });
     } else {
-      // Biasa
-      const embed = new EmbedBuilder()
-        .setColor(0x5865f2)
-        .setTitle(`${pointEmoji} ${pointName}`)
-        .setDescription(`**${user.username}**`)
-        .setThumbnail(user.displayAvatarURL({ size: 128 }))
-        .addFields(
-          { name: '🏆 Rank',             value: rank,                                         inline: true },
-          { name: '💬 Chat',             value: (ud.chat || 0).toLocaleString(),              inline: true },
-          { name: '🎙️ Voice XP',        value: `${(ud.voice || 0).toLocaleString()} XP`,    inline: true },
-          { name: `${pointEmoji} Total`, value: `**${ud.points.toLocaleString()} ${pointName}**`, inline: true },
-          { name: `${creditEmoji} Credits`, value: creditsStr,                               inline: true },
-          { name: '🎒 Koleksi',          value: `${totalAnimals} hewan`,                     inline: true },
-        )
-        .setFooter({ text: `${botName} | ${new Date().toLocaleString('id-ID')}` });
-      interaction.reply({ embeds: [embed] });
+      interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setColor(0x5865f2)
+          .setTitle(`${pointEmoji} ${pointName}`)
+          .setDescription(`**${user.username}**`)
+          .setThumbnail(user.displayAvatarURL({ size: 128 }))
+          .addFields(
+            { name: '🏆 Rank',               value: rank,                                          inline: true },
+            { name: '💬 Chat',               value: (ud.chat || 0).toLocaleString(),               inline: true },
+            { name: '🎙️ Voice XP',          value: `${(ud.voice || 0).toLocaleString()} XP`,     inline: true },
+            { name: `${pointEmoji} Total`,   value: `**${ud.points.toLocaleString()} ${pointName}**`, inline: true },
+            { name: `${creditEmoji} Credits`,value: creditsStr,                                    inline: true },
+            { name: '🎒 Koleksi',            value: `${totalAnimals} hewan`,                      inline: true },
+          )
+          .setFooter({ text: `${botName} | ${new Date().toLocaleString('id-ID')}` })]
+      });
     }
   }
 
@@ -273,7 +293,6 @@ client.on('interactionCreate', async interaction => {
     if (Math.random() < 0.08) {
       const enemy = enemies[Math.floor(Math.random() * enemies.length)];
       const loss = rand(enemy.min, enemy.max);
-      // Credits bisa minus
       db.updateUser(userId, { credits: ud.credits - loss });
       return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle('💀 Apes!').setDescription(`Kamu diserang ${enemy.emoji} **${enemy.name}** dan kehilangan **-${loss.toLocaleString()} ${creditName}**!\n${ud.credits - loss < 0 ? '⚠️ Credits kamu minus!' : ''}`)] });
     }
@@ -290,20 +309,47 @@ client.on('interactionCreate', async interaction => {
     });
   }
 
+  // /fish
+  else if (commandName === 'fish') {
+    const ud = db.getUser(userId);
+    const diff = Date.now() - (ud.lastFish ? new Date(ud.lastFish).getTime() : 0);
+    if (diff < FISH_COOLDOWN) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`⏰ Tunggu **${formatTime(FISH_COOLDOWN - diff)}** lagi.`)], ephemeral: true });
+    db.updateUser(userId, { lastFish: new Date().toISOString() });
+
+    // 10% nyangkut sampah
+    if (Math.random() < 0.10) {
+      const junk = ['👟 Sepatu Bolong', '🥫 Kaleng Bekas', '🪣 Ember Rusak', '🧤 Sarung Tangan'];
+      const item = junk[Math.floor(Math.random() * junk.length)];
+      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0x95a5a6).setTitle('🎣 Aduh...').setDescription(`Kamu malah dapet **${item}**... coba lagi! 😅`)] });
+    }
+
+    const fish = pickFish();
+    const gain = rand(fish.min, fish.max);
+    const col = ud.collection || {};
+    col[fish.name] = (col[fish.name] || 0) + 1;
+    db.updateUser(userId, { credits: ud.credits + gain, collection: col });
+    interaction.reply({
+      embeds: [new EmbedBuilder().setColor(tierColors[fish.tier] || 0x3498db).setTitle('🎣 Dapat Ikan!')
+        .setDescription(`Kamu mancing ${fish.emoji} **${fish.name}**\n**[${fish.tier}]** — Dapat **+${gain.toLocaleString()} ${creditName}**!`)
+        .setFooter({ text: `Koleksi: ${col[fish.name]}x ${fish.name}` })]
+    });
+  }
+
   // /collection
   else if (commandName === 'collection') {
     const ud = db.getUser(userId);
     const col = ud.collection || {};
-    if (!Object.keys(col).length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription('❌ Koleksi kosong! Coba `/hunt` dulu.')], ephemeral: true });
+    if (!Object.keys(col).length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription('❌ Koleksi kosong! Coba `/hunt` atau `/fish` dulu.')], ephemeral: true });
     const byTier = {};
-    for (const a of animals) { if (col[a.name]) { if (!byTier[a.tier]) byTier[a.tier] = []; byTier[a.tier].push(`${a.emoji} **${a.name}** x${col[a.name]}`); } }
+    const allCreatures = [...animals, ...fishes];
+    for (const a of allCreatures) { if (col[a.name]) { if (!byTier[a.tier]) byTier[a.tier] = []; byTier[a.tier].push(`${a.emoji} **${a.name}** x${col[a.name]}`); } }
     const fields = [];
     for (const tier of ['Mythic','Legendary','Epic','Rare','Common','Basic']) {
       if (byTier[tier]) fields.push({ name: tier, value: byTier[tier].join('\n'), inline: false });
     }
     interaction.reply({
       embeds: [new EmbedBuilder().setColor(0x9b59b6).setTitle(`🎒 Koleksi ${user.username}`)
-        .setDescription(`Total: **${Object.values(col).reduce((a,b)=>a+b,0)} hewan** ditangkap`)
+        .setDescription(`Total: **${Object.values(col).reduce((a,b)=>a+b,0)} item** dikumpulkan`)
         .addFields(fields).setThumbnail(user.displayAvatarURL({ size: 128 })).setFooter({ text: `${botName} Collection` })]
     });
   }
@@ -320,10 +366,10 @@ client.on('interactionCreate', async interaction => {
     db.updateUser(userId, { lastRob: new Date().toISOString() });
 
     if (Math.random() < 0.65) {
-      // Ketangkep — potong point banyak
       const fine = rand(1000, 5000);
-      db.updateUser(userId, { points: ud.points - fine, credits: ud.credits - rand(200, 1000) });
-      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle('🚔 Ketangkep!').setDescription(`Kamu ketangkep pas mau rob **${target.username}**!\n💥 Denda: **-${fine.toLocaleString()} ${pointName}** + credits!`)] });
+      const creditFine = rand(200, 1000);
+      db.updateUser(userId, { points: ud.points - fine, credits: ud.credits - creditFine });
+      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle('🚔 Ketangkep!').setDescription(`Kamu ketangkep pas mau rob **${target.username}**!\n💥 Denda: **-${fine.toLocaleString()} ${pointName}** + **-${creditFine.toLocaleString()} ${creditName}**!`)] });
     }
 
     const robAmount = Math.floor(td.credits * (rand(10, 40) / 100));
@@ -337,47 +383,31 @@ client.on('interactionCreate', async interaction => {
     const target = interaction.options.getUser('target');
     const ud = db.getUser(userId);
     const td = db.getUser(target.id);
-
     if (target.id === userId) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription('❌ Gak bisa rob diri sendiri!')], ephemeral: true });
-
     const targetCol = td.collection || {};
     const ownedAnimals = Object.entries(targetCol).filter(([, count]) => count > 0);
-    if (!ownedAnimals.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`❌ **${target.username}** gak punya hewan di koleksinya!`)], ephemeral: true });
-
+    if (!ownedAnimals.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`❌ **${target.username}** koleksinya kosong!`)], ephemeral: true });
     const diff = Date.now() - (ud.lastRobHunt ? new Date(ud.lastRobHunt).getTime() : 0);
     if (diff < ROBHUNT_COOLDOWN) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`⏰ Tunggu **${formatTime(ROBHUNT_COOLDOWN - diff)}** lagi.`)], ephemeral: true });
-
     db.updateUser(userId, { lastRobHunt: new Date().toISOString() });
 
-    // 75% ketangkep
     if (Math.random() < 0.75) {
       const fine = rand(2000, 8000);
       const creditFine = rand(500, 2000);
       db.updateUser(userId, { points: ud.points - fine, credits: ud.credits - creditFine });
-      return interaction.reply({
-        embeds: [new EmbedBuilder().setColor(0xff4444).setTitle('🚔 Ketangkep Nyuri Hewan!')
-          .setDescription(`Kamu kepergok nyuri hewan dari **${target.username}**!\n💥 Denda: **-${fine.toLocaleString()} ${pointName}** + **-${creditFine.toLocaleString()} ${creditName}**!`)]
-      });
+      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle('🚔 Ketangkep Nyuri!').setDescription(`Kamu kepergok nyuri dari **${target.username}**!\n💥 Denda: **-${fine.toLocaleString()} ${pointName}** + **-${creditFine.toLocaleString()} ${creditName}**!`)] });
     }
 
-    // 25% berhasil — ambil hewan random dari koleksi target
     const [stolenName] = ownedAnimals[Math.floor(Math.random() * ownedAnimals.length)];
-    const stolenAnimal = animals.find(a => a.name === stolenName) || { emoji: '🐾', tier: 'Basic' };
-
-    // Kurangi dari target, tambah ke robber
+    const allCreatures = [...animals, ...fishes];
+    const stolenAnimal = allCreatures.find(a => a.name === stolenName) || { emoji: '🐾', tier: 'Basic' };
     targetCol[stolenName]--;
     if (targetCol[stolenName] <= 0) delete targetCol[stolenName];
     db.updateUser(target.id, { collection: targetCol });
-
     const myCol = ud.collection || {};
     myCol[stolenName] = (myCol[stolenName] || 0) + 1;
     db.updateUser(userId, { collection: myCol });
-
-    interaction.reply({
-      embeds: [new EmbedBuilder().setColor(tierColors[stolenAnimal.tier] || 0x57f287)
-        .setTitle('🥷 Rob Hunt Berhasil!')
-        .setDescription(`Kamu berhasil nyuri ${stolenAnimal.emoji} **${stolenName}** [${stolenAnimal.tier}] dari koleksi **${target.username}**! 🏃💨`)]
-    });
+    interaction.reply({ embeds: [new EmbedBuilder().setColor(tierColors[stolenAnimal.tier] || 0x57f287).setTitle('🥷 Rob Berhasil!').setDescription(`Kamu berhasil nyuri ${stolenAnimal.emoji} **${stolenName}** [${stolenAnimal.tier}] dari **${target.username}**! 🏃💨`)] });
   }
 
   // /leaderboard
@@ -387,7 +417,18 @@ client.on('interactionCreate', async interaction => {
       let name; try { name=(await guild.members.fetch(id)).user.username; } catch { name=`User#${id.slice(-4)}`; }
       return `${i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}.`} **${name}** — ${pointEmoji} ${data.points.toLocaleString()}`;
     }));
-    interaction.reply({ embeds: [new EmbedBuilder().setColor(0xffd700).setTitle('🏆 TOP LEADERBOARD').setDescription(lines.join('\n')||'Belum ada data.').setFooter({ text: `${botName} | ${new Date().toLocaleString('id-ID')}` })] });
+    interaction.reply({ embeds: [new EmbedBuilder().setColor(0xffd700).setTitle(`🏆 TOP LEADERBOARD — ${pointName}`).setDescription(lines.join('\n')||'Belum ada data.').setFooter({ text: `${botName} | ${new Date().toLocaleString('id-ID')}` })] });
+  }
+
+  // /top
+  else if (commandName === 'top') {
+    const sorted = Object.entries(db.getAllUsers()).sort((a,b)=>b[1].credits-a[1].credits).slice(0,10);
+    const lines = await Promise.all(sorted.map(async ([id,data],i) => {
+      let name; try { name=(await guild.members.fetch(id)).user.username; } catch { name=`User#${id.slice(-4)}`; }
+      const credStr = data.credits < 0 ? `-${Math.abs(data.credits).toLocaleString()} 🔴` : data.credits.toLocaleString();
+      return `${i===0?'🥇':i===1?'🥈':i===2?'🥉':`${i+1}.`} **${name}** — ${creditEmoji} ${credStr}`;
+    }));
+    interaction.reply({ embeds: [new EmbedBuilder().setColor(0x2ecc71).setTitle(`💰 TOP LEADERBOARD — ${creditName}`).setDescription(lines.join('\n')||'Belum ada data.').setFooter({ text: `${botName} | ${new Date().toLocaleString('id-ID')}` })] });
   }
 
   // /give

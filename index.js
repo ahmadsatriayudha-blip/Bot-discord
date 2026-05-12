@@ -5,16 +5,17 @@ const { token, pointName, pointEmoji, creditName, creditEmoji, botName,
         dailyCooldownMs, weeklyCooldownMs } = require('./config');
 const db = require('./db');
 
-const TOKEN    = process.env.TOKEN     || token;
-const CLIENT_ID = process.env.CLIENT_ID || require('./config').clientId;
-const GUILD_ID  = process.env.GUILD_ID  || require('./config').guildId;
+const TOKEN     = process.env.TOKEN      || token;
+const CLIENT_ID = process.env.CLIENT_ID  || require('./config').clientId;
+const GUILD_ID  = process.env.GUILD_ID   || require('./config').guildId;
 const ADMIN_ROLE_ID = '1452225986346356777';
 
-const HUNT_COOLDOWN      = 30 * 1000;      // 30 detik
-const ROB_COOLDOWN       = 5 * 60 * 1000;  // 5 menit
-const VOICE_XP_INTERVAL  = 60 * 1000;      // tiap 1 menit di voice
-const VOICE_XP_MIN       = 3;
-const VOICE_XP_MAX       = 8;
+const HUNT_COOLDOWN     = 30 * 1000;
+const ROB_COOLDOWN      = 5 * 60 * 1000;
+const ROBHUNT_COOLDOWN  = 5 * 60 * 1000;
+const VOICE_XP_INTERVAL = 60 * 1000;
+const VOICE_XP_MIN = 3;
+const VOICE_XP_MAX = 8;
 
 const client = new Client({
   intents: [
@@ -26,27 +27,21 @@ const client = new Client({
   ]
 });
 
-// ─── Voice XP tracking ───────────────────────────────────────────────
+// ─── Voice XP ────────────────────────────────────────────────────────
 const voiceTimers = new Map();
 
 function startVoiceXP(userId) {
   if (voiceTimers.has(userId)) return;
   const interval = setInterval(() => {
-    const userData = db.getUser(userId);
+    const u = db.getUser(userId);
     const xp = rand(VOICE_XP_MIN, VOICE_XP_MAX);
-    db.updateUser(userId, {
-      points: userData.points + xp,
-      voice: (userData.voice || 0) + xp,
-    });
+    db.updateUser(userId, { points: u.points + xp, voice: (u.voice || 0) + xp });
   }, VOICE_XP_INTERVAL);
   voiceTimers.set(userId, interval);
 }
 
 function stopVoiceXP(userId) {
-  if (voiceTimers.has(userId)) {
-    clearInterval(voiceTimers.get(userId));
-    voiceTimers.delete(userId);
-  }
+  if (voiceTimers.has(userId)) { clearInterval(voiceTimers.get(userId)); voiceTimers.delete(userId); }
 }
 
 // ─── Animals ─────────────────────────────────────────────────────────
@@ -105,6 +100,10 @@ function formatTime(ms) {
   return `${s}d`;
 }
 
+function getTop10() {
+  return Object.entries(db.getAllUsers()).sort((a, b) => b[1].points - a[1].points).slice(0, 10).map(([id]) => id);
+}
+
 function getRank(userId) {
   const sorted = Object.entries(db.getAllUsers()).sort((a, b) => b[1].points - a[1].points);
   const idx = sorted.findIndex(([id]) => id === userId);
@@ -122,7 +121,10 @@ async function registerCommands() {
     new SlashCommandBuilder().setName('hunt').setDescription('Berburu hewan (cooldown 30 detik)'),
     new SlashCommandBuilder().setName('collection').setDescription('Lihat koleksi hewan kamu'),
     new SlashCommandBuilder()
-      .setName('rob').setDescription('Coba rampok credits user lain (berisiko!)')
+      .setName('rob').setDescription('Rampok credits user lain (berisiko!)')
+      .addUserOption(o => o.setName('target').setDescription('Target user').setRequired(true)),
+    new SlashCommandBuilder()
+      .setName('robhunt').setDescription('Curi hewan dari koleksi user lain (75% ketangkep!)')
       .addUserOption(o => o.setName('target').setDescription('Target user').setRequired(true)),
     new SlashCommandBuilder().setName('leaderboard').setDescription('Top ranking server'),
     new SlashCommandBuilder()
@@ -172,8 +174,8 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 // ─── Interactions ─────────────────────────────────────────────────────
 client.on('interactionCreate', async interaction => {
   if (interaction.isButton()) {
-    if (interaction.customId === 'remind_daily') interaction.reply({ content: `⏰ Oke! Ingatkan kamu besok untuk claim daily!`, ephemeral: true });
-    else if (interaction.customId === 'remind_weekly') interaction.reply({ content: `⏰ Oke! Ingatkan minggu depan untuk claim weekly!`, ephemeral: true });
+    if (interaction.customId === 'remind_daily') interaction.reply({ content: `⏰ Ingatkan besok untuk claim daily!`, ephemeral: true });
+    else if (interaction.customId === 'remind_weekly') interaction.reply({ content: `⏰ Ingatkan minggu depan untuk claim weekly!`, ephemeral: true });
     return;
   }
 
@@ -210,18 +212,55 @@ client.on('interactionCreate', async interaction => {
   // /balance
   else if (commandName === 'balance') {
     const ud = db.getUser(userId);
+    const top10 = getTop10();
+    const isTop10 = top10.includes(userId);
+    const rank = getRank(userId);
+    const rankNum = parseInt(rank.replace('#', '')) || 999;
     const totalAnimals = Object.values(ud.collection || {}).reduce((a, b) => a + b, 0);
-    interaction.reply({
-      embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(`${pointEmoji} ${pointName}`).setDescription(`**${user.username}**`).setThumbnail(user.displayAvatarURL({ size: 128 }))
+
+    // Credits bisa minus
+    const creditsStr = ud.credits < 0
+      ? `**-${Math.abs(ud.credits).toLocaleString()}** 🔴`
+      : ud.credits.toLocaleString();
+
+    if (isTop10) {
+      // TOP 10 — tampilan keren
+      const medals = ['🥇','🥈','🥉','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+      const medal = medals[rankNum - 1] || '🏆';
+      const embed = new EmbedBuilder()
+        .setColor(0xffd700)
+        .setTitle(`${medal} TOP ${rankNum} — ${user.username}`)
+        .setDescription(`> *"Salah satu yang terkuat di server ini."*`)
+        .setThumbnail(user.displayAvatarURL({ size: 256 }))
         .addFields(
-          { name: '🏆 Rank',          value: getRank(userId),                              inline: true },
-          { name: '💬 Chat',          value: (ud.chat || 0).toLocaleString(),              inline: true },
-          { name: '🎙️ Voice XP',     value: `${(ud.voice || 0).toLocaleString()} XP`,    inline: true },
+          { name: '🏆 Rank',             value: rank,                                         inline: true },
+          { name: '💬 Chat',             value: (ud.chat || 0).toLocaleString(),              inline: true },
+          { name: '🎙️ Voice XP',        value: `${(ud.voice || 0).toLocaleString()} XP`,    inline: true },
           { name: `${pointEmoji} Total`, value: `**${ud.points.toLocaleString()} ${pointName}**`, inline: true },
-          { name: `${creditEmoji} Credits`, value: ud.credits.toLocaleString(),            inline: true },
-          { name: '🎒 Koleksi',       value: `${totalAnimals} hewan`,                     inline: true },
-        ).setFooter({ text: `${botName} | ${new Date().toLocaleString('id-ID')}` })]
-    });
+          { name: `${creditEmoji} Credits`, value: creditsStr,                               inline: true },
+          { name: '🎒 Koleksi',          value: `${totalAnimals} hewan`,                     inline: true },
+        )
+        .setFooter({ text: `✨ Elite Member • ${botName} | ${new Date().toLocaleString('id-ID')}` })
+        .setImage('https://i.imgur.com/filler.png');
+      interaction.reply({ embeds: [embed] });
+    } else {
+      // Biasa
+      const embed = new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle(`${pointEmoji} ${pointName}`)
+        .setDescription(`**${user.username}**`)
+        .setThumbnail(user.displayAvatarURL({ size: 128 }))
+        .addFields(
+          { name: '🏆 Rank',             value: rank,                                         inline: true },
+          { name: '💬 Chat',             value: (ud.chat || 0).toLocaleString(),              inline: true },
+          { name: '🎙️ Voice XP',        value: `${(ud.voice || 0).toLocaleString()} XP`,    inline: true },
+          { name: `${pointEmoji} Total`, value: `**${ud.points.toLocaleString()} ${pointName}**`, inline: true },
+          { name: `${creditEmoji} Credits`, value: creditsStr,                               inline: true },
+          { name: '🎒 Koleksi',          value: `${totalAnimals} hewan`,                     inline: true },
+        )
+        .setFooter({ text: `${botName} | ${new Date().toLocaleString('id-ID')}` });
+      interaction.reply({ embeds: [embed] });
+    }
   }
 
   // /hunt
@@ -231,12 +270,12 @@ client.on('interactionCreate', async interaction => {
     if (diff < HUNT_COOLDOWN) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`⏰ Tunggu **${formatTime(HUNT_COOLDOWN - diff)}** lagi.`)], ephemeral: true });
     db.updateUser(userId, { lastHunt: new Date().toISOString() });
 
-    // 8% chance diserang
     if (Math.random() < 0.08) {
       const enemy = enemies[Math.floor(Math.random() * enemies.length)];
       const loss = rand(enemy.min, enemy.max);
-      db.updateUser(userId, { credits: Math.max(0, ud.credits - loss) });
-      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle('💀 Apes!').setDescription(`Kamu diserang ${enemy.emoji} **${enemy.name}** dan kehilangan **-${loss.toLocaleString()} ${creditName}**!`)] });
+      // Credits bisa minus
+      db.updateUser(userId, { credits: ud.credits - loss });
+      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle('💀 Apes!').setDescription(`Kamu diserang ${enemy.emoji} **${enemy.name}** dan kehilangan **-${loss.toLocaleString()} ${creditName}**!\n${ud.credits - loss < 0 ? '⚠️ Credits kamu minus!' : ''}`)] });
     }
 
     const animal = pickAnimal();
@@ -281,15 +320,64 @@ client.on('interactionCreate', async interaction => {
     db.updateUser(userId, { lastRob: new Date().toISOString() });
 
     if (Math.random() < 0.65) {
-      const fine = rand(200, Math.min(1000, ud.credits));
-      db.updateUser(userId, { credits: Math.max(0, ud.credits - fine) });
-      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle('🚔 Ketangkep!').setDescription(`Kamu ketangkep pas mau rob **${target.username}**!\nKena denda **-${fine.toLocaleString()} ${creditName}**!`)] });
+      // Ketangkep — potong point banyak
+      const fine = rand(1000, 5000);
+      db.updateUser(userId, { points: ud.points - fine, credits: ud.credits - rand(200, 1000) });
+      return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setTitle('🚔 Ketangkep!').setDescription(`Kamu ketangkep pas mau rob **${target.username}**!\n💥 Denda: **-${fine.toLocaleString()} ${pointName}** + credits!`)] });
     }
 
     const robAmount = Math.floor(td.credits * (rand(10, 40) / 100));
     db.updateUser(userId, { credits: ud.credits + robAmount });
     db.updateUser(target.id, { credits: td.credits - robAmount });
     interaction.reply({ embeds: [new EmbedBuilder().setColor(0x57f287).setTitle('💰 Rob Berhasil!').setDescription(`Kamu berhasil rampok **${target.username}**!\nDapat **+${robAmount.toLocaleString()} ${creditName}**! 🏃`)] });
+  }
+
+  // /robhunt
+  else if (commandName === 'robhunt') {
+    const target = interaction.options.getUser('target');
+    const ud = db.getUser(userId);
+    const td = db.getUser(target.id);
+
+    if (target.id === userId) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription('❌ Gak bisa rob diri sendiri!')], ephemeral: true });
+
+    const targetCol = td.collection || {};
+    const ownedAnimals = Object.entries(targetCol).filter(([, count]) => count > 0);
+    if (!ownedAnimals.length) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`❌ **${target.username}** gak punya hewan di koleksinya!`)], ephemeral: true });
+
+    const diff = Date.now() - (ud.lastRobHunt ? new Date(ud.lastRobHunt).getTime() : 0);
+    if (diff < ROBHUNT_COOLDOWN) return interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`⏰ Tunggu **${formatTime(ROBHUNT_COOLDOWN - diff)}** lagi.`)], ephemeral: true });
+
+    db.updateUser(userId, { lastRobHunt: new Date().toISOString() });
+
+    // 75% ketangkep
+    if (Math.random() < 0.75) {
+      const fine = rand(2000, 8000);
+      const creditFine = rand(500, 2000);
+      db.updateUser(userId, { points: ud.points - fine, credits: ud.credits - creditFine });
+      return interaction.reply({
+        embeds: [new EmbedBuilder().setColor(0xff4444).setTitle('🚔 Ketangkep Nyuri Hewan!')
+          .setDescription(`Kamu kepergok nyuri hewan dari **${target.username}**!\n💥 Denda: **-${fine.toLocaleString()} ${pointName}** + **-${creditFine.toLocaleString()} ${creditName}**!`)]
+      });
+    }
+
+    // 25% berhasil — ambil hewan random dari koleksi target
+    const [stolenName] = ownedAnimals[Math.floor(Math.random() * ownedAnimals.length)];
+    const stolenAnimal = animals.find(a => a.name === stolenName) || { emoji: '🐾', tier: 'Basic' };
+
+    // Kurangi dari target, tambah ke robber
+    targetCol[stolenName]--;
+    if (targetCol[stolenName] <= 0) delete targetCol[stolenName];
+    db.updateUser(target.id, { collection: targetCol });
+
+    const myCol = ud.collection || {};
+    myCol[stolenName] = (myCol[stolenName] || 0) + 1;
+    db.updateUser(userId, { collection: myCol });
+
+    interaction.reply({
+      embeds: [new EmbedBuilder().setColor(tierColors[stolenAnimal.tier] || 0x57f287)
+        .setTitle('🥷 Rob Hunt Berhasil!')
+        .setDescription(`Kamu berhasil nyuri ${stolenAnimal.emoji} **${stolenName}** [${stolenAnimal.tier}] dari koleksi **${target.username}**! 🏃💨`)]
+    });
   }
 
   // /leaderboard
@@ -337,7 +425,7 @@ client.on('interactionCreate', async interaction => {
     const target = interaction.options.getUser('user');
     const amount = interaction.options.getInteger('jumlah');
     const td = db.getUser(target.id);
-    db.updateUser(target.id, { points: Math.max(0, td.points - amount) });
+    db.updateUser(target.id, { points: td.points - amount });
     interaction.reply({ embeds: [new EmbedBuilder().setColor(0xff4444).setDescription(`✅ Berhasil kurangi ${pointEmoji} **${amount.toLocaleString()} ${pointName}** dari **${target.username}**`)] });
   }
 });

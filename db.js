@@ -1,42 +1,76 @@
-// db.js — simple JSON database
-const fs = require('fs');
-const path = require('path');
+// db.js — Supabase database with memory cache
+const { createClient } = require('@supabase/supabase-js');
 
-const DB_PATH = path.join(__dirname, 'data.json');
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
 
-function load() {
-  if (!fs.existsSync(DB_PATH)) fs.writeFileSync(DB_PATH, '{}');
-  return JSON.parse(fs.readFileSync(DB_PATH, 'utf-8'));
+// Memory cache
+let cache = {};
+let initialized = false;
+
+// Load all data from Supabase into cache
+async function init() {
+  try {
+    const { data, error } = await supabase.from('users').select('*');
+    if (error) { console.error('DB init error:', error); return; }
+    cache = {};
+    for (const row of data) {
+      cache[row.user_id] = row.data;
+    }
+    initialized = true;
+    console.log(`✅ DB loaded: ${Object.keys(cache).length} users`);
+  } catch (err) {
+    console.error('DB init failed:', err);
+  }
 }
 
-function save(data) {
-  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-}
+// Auto-save to Supabase every 30 seconds
+setInterval(async () => {
+  if (!initialized) return;
+  for (const [userId, data] of Object.entries(cache)) {
+    try {
+      await supabase.from('users').upsert({ user_id: userId, data });
+    } catch (err) {
+      console.error('Auto-save error:', err);
+    }
+  }
+}, 30 * 1000);
 
 function getUser(userId) {
-  const db = load();
-  if (!db[userId]) {
-    db[userId] = {
+  if (!cache[userId]) {
+    cache[userId] = {
       points: 0,
       credits: 0,
       chat: 0,
+      voice: 0,
       lastDaily: null,
       lastWeekly: null,
       lastHunt: null,
+      lastFish: null,
+      lastRob: null,
+      lastRobHunt: null,
+      lastSlots: null,
+      lastTrivia: null,
+      collection: {},
+      birthday: null,
+      remindEnabled: false,
     };
-    save(db);
   }
-  return db[userId];
+  return cache[userId];
 }
 
 function updateUser(userId, data) {
-  const db = load();
-  db[userId] = { ...getUser(userId), ...data };
-  save(db);
+  cache[userId] = { ...getUser(userId), ...data };
+  // Write to Supabase async (fire and forget)
+  supabase.from('users').upsert({ user_id: userId, data: cache[userId] })
+    .then(({ error }) => { if (error) console.error('Save error:', error); })
+    .catch(err => console.error('Save error:', err));
 }
 
 function getAllUsers() {
-  return load();
+  return cache;
 }
 
-module.exports = { getUser, updateUser, getAllUsers };
+module.exports = { init, getUser, updateUser, getAllUsers };
